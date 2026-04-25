@@ -9,10 +9,9 @@ clc
 
 env=RL_environment();
 
-doTrain = false;
-nMaxEpisodes = 25000;
+training = false;
 
-if doTrain==true
+if training==false
 
     actInfo = getActionInfo(env);
     obsInfo = getObservationInfo(env);
@@ -113,7 +112,7 @@ if doTrain==true
     agent = rlPPOAgent(actor,critic,agentOpts);
 
     trainOpts = rlTrainingOptions(...
-        MaxEpisodes=nMaxEpisodes,...
+        MaxEpisodes=25000,...
         MaxStepsPerEpisode=1000,...
         Plots="training-progress",...
         StopTrainingCriteria="AverageReward",...
@@ -128,50 +127,8 @@ if doTrain==true
 else
 
     % load saved agent
-    load("agent_trained.mat","agent");
-    load("trainingStats.mat","trainingStats");
 
 end
-
-%% Print analytics (self-made)
-%% Plot analytics
-figure;
-
-% Plot episode reward over time
-subplot(2, 2, 1);
-plot(trainingStats.EpisodeReward);
-xlabel('Episode');
-ylabel('Reward');
-title('Episode Reward Over Time');
-
-% Plot episode length over time
-subplot(2, 2, 2);
-plot(trainingStats.EpisodeSteps);
-xlabel('Episode');
-ylabel('Steps');
-title('Episode Length Over Time');
-
-% Plot smoothed episode reward over time
-subplot(2, 2, 3);
-plot(trainingStats.SmoothedEpisodeReward);
-xlabel('Episode');
-ylabel('Smoothed Reward');
-title('Smoothed Episode Reward Over Time');
-
-% Plot policy loss and value loss over time
-subplot(2, 2, 4);
-yyaxis left;
-plot(trainingStats.PolicyLoss);
-ylabel('Policy Loss');
-yyaxis right;
-plot(trainingStats.ValueLoss);
-ylabel('Value Loss');
-xlabel('Training Iteration');
-title('Policy and Value Losses');
-
-% Adjust the layout and display the legend
-sgtitle('Training Analytics');
-tight_layout(pad=2);
 
 %% simulation of the sorting after training
 

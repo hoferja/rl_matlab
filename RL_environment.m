@@ -35,8 +35,8 @@ classdef RL_environment < rl.env.MATLABEnvironment
         d_boxes = zeros(10,1);
         x_boxes = zeros(10,1);
         y_boxes = zeros(10,1);
-        x_boxes_vect = zeros(10000,10);
-        y_boxes_vect = zeros(10000,10);
+        x_boxes_vect = zeros(10, 10000);
+        y_boxes_vect = zeros(10, 10000);
         cont = 0;
         pack_exited = zeros(10,1);
         exit_order = zeros(10,1);
@@ -73,12 +73,14 @@ classdef RL_environment < rl.env.MATLABEnvironment
     %% Necessary Methods
     methods              
         % Contructor method creates an instance of the environment
-        % Change class name and constructor name accordingly
+        %%
+        %%% Change class name and constructor name accordingly
         function this = RL_environment()
             % Initialize Observation settings
             ObservationInfo = rlNumericSpec([100 1]);
-            ObservationInfo.Name = 'System States';
-            ObservationInfo.Description = 'For each of 25 AMS cells: [x_k, y_k, w_k, h_k]';
+            ObservationInfo.Name = 'Parcel States';
+            ObservationInfo.Description = 'x_box, y_box, w_box, h_box';
+        %%
             
             % Initialize Action settings
             n_actions = 5*5*2;
@@ -300,19 +302,21 @@ classdef RL_environment < rl.env.MATLABEnvironment
                 end
             end
 
-            % Observation: observations for the RL to be defined
-            
-            Observation = buildObservation(this);
+            %%% Observation: observations for the RL to be defined
+            Observation = zeros(100,1);
 
-            for ii=1:this.max_gen_boxes
-                if ii<=this.n_boxes_tot
-                    this.x_boxes_vect(ii,this.cont) = this.x_boxes(ii);
-                    this.y_boxes_vect(ii,this.cont) = this.y_boxes(ii);
-                    this.x_boxes_prec(ii) = this.x_boxes(ii);
-                    this.y_boxes_prec(ii) = this.y_boxes(ii);
-                else
-                    this.x_boxes_vect(ii,this.cont) = -1;
-                    this.y_boxes_vect(ii,this.cont) = -1;
+            for ii = 1:this.n_boxes_tot
+                % Only boxes that are still on the AMS matrix are observed
+                if this.index_AMS(ii) > 0
+            
+                    k = this.index_AMS(ii);      % AMS index from 1 to 25
+                    idx = (k-1)*4 + 1;           % starting index in the state vector
+            
+                    Observation(idx)   = this.x_boxes(ii);   % x center of package
+                    Observation(idx+1) = this.y_boxes(ii);   % y center of package
+                    Observation(idx+2) = this.d_boxes(ii);   % package width
+                    Observation(idx+3) = this.d_boxes(ii);   % package height
+            
                 end
             end
 
@@ -460,11 +464,27 @@ classdef RL_environment < rl.env.MATLABEnvironment
 
             end
 
-            % InitialObservation: initial observation for the RL to be
+            %%
+            %%% InitialObservation: initial observation for the RL to be
             % defined
+            InitialObservation = zeros(100,1);
+
+            for ii = 1:this.n_boxes_tot
+                if this.index_AMS(ii) > 0
+                    k = this.index_AMS(ii);
+                    idx = (k-1)*4 + 1;
             
-            InitialObservation = buildObservation(this);
+                    InitialObservation(idx)   = this.x_boxes(ii);
+                    InitialObservation(idx+1) = this.y_boxes(ii);
+                    InitialObservation(idx+2) = this.d_boxes(ii);
+                    InitialObservation(idx+3) = this.d_boxes(ii);
+                end
+            end  
+        
             this.State = InitialObservation;
+            this.IsDone = false;
+            %%
+        
             
             % (optional) use notifyEnvUpdated to signal that the 
             % environment has been updated (e.g. to update visualization)
@@ -490,61 +510,70 @@ classdef RL_environment < rl.env.MATLABEnvironment
             this.VisualizeStates = false;
         end
 
-        % Reward function
-        function Reward = getReward(this, AMS_actions) %#ok<INUSD>
-            y_start = this.d_AMS * this.n_i_AMS;   % end of AMS (y=1.0 m)
-            y_end   = y_start + 1.0;               % 1 m rewarding area
+        %%
+        %%% Reward function
+        function Reward = getReward(this,AMS_actions)
         
-            yc = []; dc = [];
+            % Find packages inside the AMS area
+            packages_in_reward_area = [];
+        
             for ii = 1:this.n_boxes_tot
-                if this.y_boxes(ii) >= y_start && this.y_boxes(ii) <= y_end
-                    yc(end+1,1) = this.y_boxes(ii); %#ok<AGROW>
-                    dc(end+1,1) = this.d_boxes(ii); %#ok<AGROW>
+                if this.y_boxes(ii) > 0 && this.y_boxes(ii) <= this.d_AMS*5
+                    packages_in_reward_area = [packages_in_reward_area; ii];
                 end
             end
         
-            K = numel(yc);
+            K = length(packages_in_reward_area);
+        
             if K < 2
                 Reward = 0;
                 return;
             end
         
-            [yc, idx] = sort(yc);
-            dc = dc(idx);
+            % Sort packages by y-position
+            y_values = this.y_boxes(packages_in_reward_area);
+            [~, sort_idx] = sort(y_values, 'ascend');
+            packages_sorted = packages_in_reward_area(sort_idx);
         
-            flag = true;
             scores = zeros(K-1,1);
-            for k = 1:K-1
-                y_max_k   = yc(k)   + dc(k)/2;
-                y_min_kp1 = yc(k+1) - dc(k+1)/2;
-                d_k = y_min_kp1 - y_max_k;
-                scores(k) = min(10*K*atan(d_k) + K, 6);
-                if d_k < 0
-                    flag = false;
-                end
-            end
+            all_gaps_positive = true;
         
+            for kk = 1:K-1
+        
+                current_box = packages_sorted(kk);
+                next_box    = packages_sorted(kk+1);
+        
+                y_max_current = this.y_boxes(current_box) + this.d_boxes(current_box)/2;
+                y_min_next    = this.y_boxes(next_box)    - this.d_boxes(next_box)/2;
+        
+                d_k = y_min_next - y_max_current;
+        
+                % Local score for this neighboring package pair
+                local_score = 10 * K * atan(d_k) + K;
+        
+                % Clip maximum score
+                local_score = min(local_score, 6);
+        
+                scores(kk) = local_score;
+        
+                if d_k <= 0
+                    all_gaps_positive = false;
+                end
+        
+            end
+            
+        
+            % Worst-case reward
             Reward = min(scores);
-            if flag && K >= 3
+        
+            % Bonus if all package gaps are positive and at least 3 packages
+            % are currently evaluated
+            if all_gaps_positive && K >= 3
                 Reward = Reward + 20;
             end
+         
         end
-        
-
-        function obs = buildObservation(this)
-            obs = zeros(100,1);
-            for ii = 1:this.n_boxes_tot
-                if ii <= numel(this.i_box) && ii <= numel(this.j_box) ...
-                        && this.i_box(ii) < 6 && this.j_box(ii) < 6
-                    k = this.j_box(ii) + (this.i_box(ii)-1)*this.n_j_AMS; % 1..25
-                    base = (k-1)*4;
-                    obs(base+1) = this.x_boxes(ii);   % x_k
-                    obs(base+2) = this.y_boxes(ii);   % y_k
-                    obs(base+3) = this.d_boxes(ii);   % w_k
-                    obs(base+4) = this.d_boxes(ii);   % h_k
-                end
-            end
-        end
+        %%
         
         % (optional) Properties validation through set methods
         function set.State(this,state)
@@ -552,7 +581,7 @@ classdef RL_environment < rl.env.MATLABEnvironment
             this.State = double(state(:));
             notifyEnvUpdated(this);
         end
-        
+    
     end
     
     methods (Access = protected)
